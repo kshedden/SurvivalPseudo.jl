@@ -39,6 +39,7 @@ using FiniteDifferences
                     ncensor = sf$n.censor
                     utime = sf$time
                     rsurv = sf$surv
+                    rse = sf$std.err
                     "
 
                     @rget nrisk
@@ -46,12 +47,14 @@ using FiniteDifferences
                     @rget utime
                     @rget ncensor
                     @rget rsurv
+                    @rget rse
 
                     @test isapprox(utime, sf.utime)
                     @test isapprox(nevent, sf.nevent)
                     @test isapprox(ncensor, sf.ncensor)
                     @test isapprox(nrisk, sf.nrisk)
                     @test isapprox(rsurv, sf.surv, atol=1e-5, rtol=1e-5)
+                    @test isapprox(rse, stderror(sf))
                 end
             end
         end
@@ -151,4 +154,3 @@ end
     @test abs(mean(ps) - mean(bf)) < 0.05
     @test abs(std(ps) - std(bf)) < 0.2
 end
-

@@ -16,15 +16,18 @@ struct SurvivalFunction
     # The sorted, unique values in 'time'
     utime::Vector{Float64}
 
-    # The number of events occuring at each value in 'utime'
+    # The unweighted number of events occuring at each value in 'utime'
     nevent::Vector{Float64}
 
-    # The number of observations that are censored at each value
-    # in 'utime'
-    ncensor::Vector{Float64}
+    # The weighted number of events occuring at each value in 'utime'
+    neventw::Vector{Float64}
 
-    # The number of individuals at risk at each value of 'utime'
-    nrisk::Vector{Float64}
+    # The weighted number of observations that are censored at each value
+    # in 'utime'
+    ncensorw::Vector{Float64}
+
+    # The weighted number of individuals at risk at each value of 'utime'
+    nriskw::Vector{Float64}
 
     # The indices of observations that enter at each element of 'utime'
     enter::Vector{Vector{Int64}}
@@ -68,19 +71,21 @@ function SurvivalFunction(entry, time, status; weights=nothing)
     # Unique times
     utime = sort(unique(time))
 
-    # Number of events at each time in 'utime'.
+    # Weighted and unweighted number of events at each time in 'utime'.
+    neventw = zeros(length(utime))
     nevent = zeros(length(utime))
 
     # Number of individuals who are censored at each time in 'utime'
-    ncensor = zeros(length(utime))
+    ncensorw = zeros(length(utime))
 
     # Ranges in 'time' corresponding to each unique event time
     utime_ix = []
     for (i,t) in enumerate(utime)
         ii = searchsorted(time, t)
         push!(utime_ix, ii)
-        nevent[i] = sum(weights[ii] .* status[ii])
-        ncensor[i] = sum(weights[ii]) - nevent[i]
+        nevent[i] = sum(status[ii])
+        neventw[i] = sum(weights[ii] .* status[ii])
+        ncensorw[i] = sum(weights[ii]) - neventw[i]
     end
 
     # Shift entry times to subsequent event time, so that entry
@@ -95,30 +100,28 @@ function SurvivalFunction(entry, time, status; weights=nothing)
     end
 
     m = length(utime)
-    nrisk = zeros(m)
+    nriskw = zeros(m)
     for i in eachindex(utime)
         if i == 1
-            nrisk[i] = sum(weights[enter[i]])
+            nriskw[i] = sum(weights[enter[i]])
         else
-            nrisk[i] = nrisk[i-1] + sum(weights[enter[i]]) - nevent[i-1] - ncensor[i-1]
+            nriskw[i] = nriskw[i-1] + sum(weights[enter[i]]) - neventw[i-1] - ncensorw[i-1]
         end
     end
 
-    surv = cumprod(1 .- nevent ./ nrisk)
+    surv = cumprod(1 .- neventw ./ nriskw)
 
-    return SurvivalFunction(entry_orig, entry, time, status, utime, nevent, ncensor, nrisk, enter, weights, utime_ix, surv, irev)
+    return SurvivalFunction(entry_orig, entry, time, status, utime, nevent, neventw, ncensorw, nriskw, enter, weights, utime_ix, surv, irev)
 end
 
 function survprob(sf::SurvivalFunction, stime)
-
     (; utime, surv) = sf
-
-    _, i = findmin(abs.(utime .- stime))
-    return surv[i]
+    js = nearestpos(utime, stime)
+    return surv[js]
 end
 
 """
-    pseudo(sf, stime; method)
+    surv_pseudo(sf, stime; method)
 
 Compute pseudo-observations for the (log) survival function `sf` at time `stime`.
 
@@ -126,12 +129,12 @@ If method is :IJ, the infintessimal jacknife method is used to obtain pseudo-obs
 for the log survival probability.  If method is :mart, the martingale residual method
 is used to obtain pseudo-observations for the survival probability.
 """
-function pseudo(sf::SurvivalFunction, stime::T; method::Symbol=:IJ) where{T<:Real}
+function surv_pseudo(sf::SurvivalFunction, stime::T; method::Symbol=:IJ) where{T<:Real}
 
     if method == :IJ
-        return pseudo_ij(sf, stime)
+        return surv_pseudo_ij(sf, stime)
     elseif method == :mart
-        return pseudo_mart(sf, stime)
+        return surv_pseudo_mart(sf, stime)
     else
         error("Unknown method $(method)")
     end
@@ -143,15 +146,15 @@ end
 Returns the standard errors of the (possibly transformed) estimated survival
 probabilities.
 
-If method == :greenwood, the returned standard errors are for the estimated
-survival probabilities.  If method == :log, the returned standard errors
+If method=:greenwood, the returned standard errors are for the estimated
+survival probabilities.  If method=:log, the returned standard errors
 are for the log of the estimated survival probabilities.
 """
 function stderror(sf::SurvivalFunction; method=:greenwood)
 
-    (; nrisk, nevent, surv) = sf
+    (; nriskw, nevent, neventw, surv) = sf
 
-    r = nevent ./ (nrisk .* (nrisk - nevent))
+    r = nevent ./ (nriskw .* (nriskw - neventw))
     c = sqrt.(cumsum(r))
 
     if method == :greenwood
@@ -173,24 +176,27 @@ function confint(sf::SurvivalFunction; level::Real=0.95)
     return (lower=surv.*exp.(s - f*s), upper=surv.*exp.(s + f*s))
 end
 
-function pseudo_ij(sf::SurvivalFunction, stime)
+# Calculate the pseudo-observation for the log survival function evaluated at stime.
+function surv_pseudo_ij(sf::SurvivalFunction, stime)
 
-    (; time, status, entry, utime, nrisk, nevent, utime_ix, surv, irev) = sf
+    (; time, status, entry, utime, nriskw, neventw, utime_ix, surv, irev) = sf
 
     n = length(time)
     m = length(utime)
 
-    _, js = findmin(abs.(utime .- stime))
+    js = nearestpos(utime, stime)
     stime = utime[js]
+
+    # The estimate using all data.
     lest = log(surv[js])
 
-    # dgrad[j] is the partial derivative of (1 - nevent[j]/nrisk[j]) with respect to nevent[j]
-    # cgrad[j] is the partial derivative of cumsum (1 - nevent[j]/nrisk[j]) with respect to nrisk[j]
+    # dgrad[j] is the partial derivative of (1 - neventw[j]/nriskw[j]) with respect to neventw[j]
+    # cgrad[j] is the partial derivative of cumsum (1 - neventw[j]/nriskw[j]) with respect to nriskw[j]
     dgrad = zeros(m)
     cgrad = zeros(m)
     for j in 1:m
-        dgrad[j] = 1 / (nevent[j] - nrisk[j])
-        cgrad[j] = nevent[j] / (nrisk[j] * (nrisk[j] - nevent[j]))
+        dgrad[j] = 1 / (neventw[j] - nriskw[j])
+        cgrad[j] = neventw[j] / (nriskw[j] * (nriskw[j] - neventw[j]))
     end
     cgrad = cumsum(cgrad)
 
@@ -199,6 +205,7 @@ function pseudo_ij(sf::SurvivalFunction, stime)
     for i in 1:n
         ke = searchsortedfirst(utime, entry[i])
         if ke > js
+            # Observation i enters after time stime, the gradient is zero.
             continue
         end
         k = searchsortedfirst(utime, time[i])
@@ -213,19 +220,13 @@ function pseudo_ij(sf::SurvivalFunction, stime)
     end
     grad = grad[irev]
 
-    # The pseudo-observations
-    loo = lest .- grad
-
-    return (pseudo=n*lest .- (n-1)*loo, estimate=lest, grad=grad)
+    # Therneau uses n instead of n-1 below.
+    return (pseudo=lest .+ (n-1)*grad, estimate=lest, grad=grad)
 end
 
-function pseudo_mart(sf::SurvivalFunction, stime)
-
-    (; time, status, entry, utime, nrisk, nevent, utime_ix, surv, irev) = sf
-
-    n = length(time)
+# Find the position in utime (assumed sorted) which is closest to stime.
+function nearestpos(utime::S, stime::T) where {S<:AbstractVector, T<:Real}
     m = length(utime)
-
     ii = searchsorted(utime, stime)
     if last(ii) == 0
         js = first(ii)
@@ -236,9 +237,20 @@ function pseudo_mart(sf::SurvivalFunction, stime)
     else
         js = abs(utime[first(ii)] - stime) < abs(utime[last(ii)] - stime) ? first(ii) : last(ii)
     end
+    return js
+end
+
+function surv_pseudo_mart(sf::SurvivalFunction, stime)
+
+    (; time, status, entry, utime, nriskw, neventw, utime_ix, surv, irev) = sf
+
+    n = length(time)
+    m = length(utime)
+
+    js = nearestpos(utime, stime)
     est = surv[js]
 
-    cx = n * cumsum(nevent ./ nrisk.^2)
+    cx = n * cumsum(neventw ./ nriskw.^2)
     ps = zeros(n)
 
     for i in 1:n
@@ -259,7 +271,7 @@ function pseudo_mart(sf::SurvivalFunction, stime)
         end
         f = -f
         if status[i] && kt <= js
-            f += n / nrisk[kt]
+            f += n / nriskw[kt]
         end
 
         ps[i] = surv[js] * (1 - f)
@@ -285,7 +297,7 @@ COMMUNICATIONS IN STATISTICS—THEORY AND METHODS
 """
 function meanreslife(sf::SurvivalFunction, tau, ftype::Vector{Bool}; npt=20)
 
-    (; time, status, entry_orig, entry, utime, nrisk, nevent, utime_ix, surv, irev) = sf
+    (; time, status, entry_orig, entry, utime, nriskw, neventw, utime_ix, surv, irev) = sf
 
     if length(ftype) != length(time)
         error("The failure type vector 'ftype' must have the same length as 'time'")
@@ -337,7 +349,7 @@ function meanreslife(sf::SurvivalFunction, tau, ftype::Vector{Bool}; npt=20)
     # Point estimate of the mean restricted life.
     tgt = sum(qs) * mesh
 
-    ps = [pseudo(csf, t; method=:mart).pseudo for t in stimes]
+    ps = [surv_pseudo(csf, t; method=:mart).pseudo for t in stimes]
     ps = hcat(ps...)
 
     # Jack-knife version of qs

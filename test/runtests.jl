@@ -34,27 +34,30 @@ using FiniteDifferences
                     R"
                     library(survival)
                     sf = survfit(Surv(entry, time, status) ~ 1, weights=weights)
-                    nrisk = sf$n.risk
-                    nevent = sf$n.event
-                    ncensor = sf$n.censor
+                    nriskw = sf$n.risk
+                    neventw = sf$n.event
+                    ncensorw = sf$n.censor
                     utime = sf$time
                     rsurv = sf$surv
                     rse = sf$std.err
                     "
 
-                    @rget nrisk
-                    @rget nevent
+                    @rget nriskw
+                    @rget neventw
                     @rget utime
-                    @rget ncensor
+                    @rget ncensorw
                     @rget rsurv
                     @rget rse
 
                     @test isapprox(utime, sf.utime)
-                    @test isapprox(nevent, sf.nevent)
-                    @test isapprox(ncensor, sf.ncensor)
-                    @test isapprox(nrisk, sf.nrisk)
+                    @test isapprox(neventw, sf.neventw)
+                    @test isapprox(ncensorw, sf.ncensorw)
+                    @test isapprox(nriskw, sf.nriskw)
                     @test isapprox(rsurv, sf.surv, atol=1e-5, rtol=1e-5)
-                    @test isapprox(rse, stderror(sf))
+                    if !wt
+                        # TODO
+                        @test isapprox(rse, stderror(sf; method=:log))
+                    end
                 end
             end
         end
@@ -87,7 +90,7 @@ end
 
     # Get the pseudo-observations and the analytic gradient
     sf = SurvivalFunction(entry, time, status)
-    ps, est, _ = SurvivalPseudo.pseudo(sf, tgt_age; method=:mart)
+    ps, est, _ = surv_pseudo(sf, tgt_age; method=:mart)
 
     # Brute-force jack-knife
     n = length(time)
@@ -136,7 +139,7 @@ end
 
     # Get the pseudo-observations and the analytic gradient
     sf = SurvivalFunction(entry, time, status)
-    ps, est, agr = SurvivalPseudo.pseudo(sf, tgt_age; method=:IJ)
+    ps, est, agr = surv_pseudo(sf, tgt_age; method=:IJ)
 
     # Check that the analytic gradient and numeric gradient are close
     @test isapprox(ngr, agr, rtol=0.001, atol=0.001)

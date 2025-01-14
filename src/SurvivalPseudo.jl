@@ -6,7 +6,7 @@ module SurvivalPseudo
     import Base: show
 
     # From this package
-    export SurvivalFunction, pseudo, meanreslife
+    export SurvivalFunction, surv_pseudo, survprob, meanreslife
 
     # From StatsAPI
     export stderror, confint

@@ -31,7 +31,7 @@ function plot_surv(times, psm, pse; log=true, title="")
 end
 
 # Compute the pseudo-observations for log survival probabilities, using infintesimal jackknife.
-ps = [pseudo(sf, t).pseudo for t in times]
+ps = [surv_pseudo(sf, t).pseudo for t in times]
 ps = hcat(ps...)
 psm = mean(ps; dims=1)[:]
 psd = std(ps; dims=1)[:]
@@ -39,7 +39,7 @@ pse = psd / sqrt(n)
 plot_surv(times, psm, pse; log=true, title="Infinitesimal jackknife")
 
 # Compute the pseudo-observations for log survival probabilities, using martingale residuals.
-ps = [pseudo(sf, t; method=:mart).pseudo for t in times]
+ps = [surv_pseudo(sf, t; method=:mart).pseudo for t in times]
 ps = hcat(ps...)
 psm = mean(ps; dims=1)[:]
 psd = std(ps; dims=1)[:]

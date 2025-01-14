@@ -16,7 +16,7 @@ sf = SurvivalFunction(mdat[:, :entry], mdat[:, :futime], mdat[:, :death])
 times = range(10, 8000, 10)
 
 # Compute the pseudo-observations for log survival probabilities, using infintesimal jackknife.
-ps = [pseudo(sf, t).pseudo for t in times]
+ps = [surv_pseudo(sf, t).pseudo for t in times]
 ps = hcat(ps...)
 psm = mean(ps; dims=1)[:]
 psd = std(ps; dims=1)[:]
